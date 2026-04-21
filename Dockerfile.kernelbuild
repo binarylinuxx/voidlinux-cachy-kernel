@@ -1,0 +1,21 @@
+FROM ghcr.io/void-linux/void-glibc-full:latest
+
+RUN xbps-install -Syu xbps && xbps-install -Sy \
+bash bc binutils clang lld curl elfutils flex bison gcc kmod \
+elfutils-devel openssl-devel pahole perl python3 zlib-devel \
+zstd git make patch shadow sudo
+
+RUN useradd -m builder && echo 'builder ALL=(ALL) NOPASSWD: ALL' > /etc/sudoers.d/builder
+
+# clone void-packages as root, fix ownership
+RUN git clone --depth=1 https://github.com/void-linux/void-packages /void-packages && \
+    chown -R builder:builder /void-packages
+
+# copy our linux-cachyos template
+COPY --chown=builder:builder kernel/srcpkgs/linux-cachyos /void-packages/srcpkgs/linux-cachyos
+
+WORKDIR /void-packages
+
+# Run as root so we can set up /output and copy results
+# Then switch to builder just for xbps-src commands
+CMD ["sh", "-c", "mkdir -p /output && chown builder:builder /output && su - builder -c 'cd /void-packages && ./xbps-src binary-bootstrap && ./xbps-src pkg linux-cachyos' && cp /void-packages/hostdir/binpkgs/*.xbps /output/ && ls -la /output/"]
