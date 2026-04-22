@@ -18,4 +18,4 @@ WORKDIR /void-packages
 
 # Run as root so we can set up /output and copy results
 # Then switch to builder just for xbps-src commands
-CMD ["sh", "-c", "mkdir -p /output && chown builder:builder /output && su - builder -c 'cd /void-packages && ./xbps-src binary-bootstrap && ./xbps-src pkg linux-cachyos' && cp /void-packages/hostdir/binpkgs/*.xbps /output/ && ls -la /output/"]
+CMD ["sh", "-c", "mkdir -p /output && chown builder:builder /output && su - builder -c 'cd /void-packages && ./xbps-src binary-bootstrap && ./xbps-src pkg linux-cachyos' 2>&1 | tee /output/build.log || echo 'BUILD FAILED' >> /output/build.log; cp /void-packages/hostdir/binpkgs/*.xbps /output/ 2>/dev/null; ls -la /output/"]

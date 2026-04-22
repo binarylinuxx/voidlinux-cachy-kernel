@@ -9,15 +9,28 @@ homepage="https://github.com/CachyOS/linux-cachyos"
 arch="x86_64"
 _srcname="cachyos-${version}-${revision}"
 distfiles="https://github.com/CachyOS/linux/releases/download/${_srcname}/${_srcname}.tar.gz"
-checksum="d835e31dcc6665be43da8484d267e22e33f9f8b59e4f2892ce941705e728318a"
+checksum="594e4f072444d8e03e8bcf4d890ffcf63671380416e1f53ac537d39865207432"
 
 wrksrc="${_srcname}"
 
 makedepends="bc binutils clang lld llvm elfutils elfutils-devel flex bison gcc kmod libelf openssl-devel pahole
- perl python3 zlib-devel zstd eudev-libudev-devel wireless-regdb"
+perl python3 zlib-devel zstd xz cpio xxHash tar eudev-libudev-devel wireless-regdb rust rust-src rust-bindgen"
 
+_kenver="${version}-cachyos"
+
+triggers="kernel-hooks"
+kernel_hooks_version="${_kenver}"
+
+preserve=yes
 nopie=yes
-nosstrip=yes
+nostrip=yes
+
+# Files modified when external modules are built (populated in do_install)
+
+# Reproducible build
+export KBUILD_BUILD_TIMESTAMP=$(LC_ALL=C date -ud @${SOURCE_DATE_EPOCH:-0})
+export KBUILD_BUILD_USER=voidlinux
+export KBUILD_BUILD_HOST=voidlinux
 
 do_configure() {
 	cd "${wrksrc}"
@@ -27,53 +40,81 @@ do_configure() {
 }
 
 do_build() {
-    cd "${wrksrc}"
-    make LLVM=1 ${makejobs}
+	cd "${wrksrc}"
+	export RUSTC_BOOTSTRAP=1
+	make LLVM=1 ${makejobs} 2>&1 | tee "${XBPS_SRCDISTDIR}/build-${pkgname}-${version}.log"
 }
 
 do_install() {
-    cd "${wrksrc}"
-    local _kernver
-    _kernver="$(make -s kernelrelease)"
-    vinstall arch/x86/boot/bzImage 644 boot "vmlinuz-${_kernver}"
-    vinstall System.map 644 boot "System.map-${_kernver}"
-    vinstall .config 644 boot "config-${_kernver}"
-    make INSTALL_MOD_PATH="${DESTDIR}/usr" INSTALL_MOD_STRIP=1 modules_install
-    local _hdrdir="usr/src/linux-headers-${_kernver}"
-    vmkdir "${_hdrdir}"
-    cp .config "${DESTDIR}/${_hdrdir}/.config"
-    if [ -f Module.symvers ]; then
-        cp Module.symvers "${DESTDIR}/${_hdrdir}/Module.symvers"
-    elif [ -f vmlinux.symvers ]; then
-        cp vmlinux.symvers "${DESTDIR}/${_hdrdir}/Module.symvers"
-        msg_warn "Module.symvers missing; using vmlinux.symvers compatibility fallback"
-    else
-        msg_warn "Module.symvers not found; installing headers without symbol version table"
-    fi
-    cp System.map "${DESTDIR}/${_hdrdir}/System.map"
-    cp Makefile "${DESTDIR}/${_hdrdir}/"
-    cp Kbuild "${DESTDIR}/${_hdrdir}/" 2>/dev/null || true
-    vcopy scripts "${_hdrdir}"
-    vcopy include "${_hdrdir}"
-    vmkdir "${_hdrdir}/arch"
-    vcopy arch/x86/include "${_hdrdir}/arch/x86"
-    cp arch/x86/Makefile "${DESTDIR}/${_hdrdir}/arch/x86/" 2>/dev/null || true
-    [ -f arch/x86/Makefile_32.cpu ] && cp arch/x86/Makefile_32.cpu "${DESTDIR}/${_hdrdir}/arch/x86/"
-    [ -f arch/x86/kernel/asm-offsets.h ] && {
-        vmkdir "${_hdrdir}/arch/x86/kernel"
-        cp arch/x86/kernel/asm-offsets.h "${DESTDIR}/${_hdrdir}/arch/x86/kernel/"
-    }
-    if [ ! -f "${DESTDIR}/${_hdrdir}/Module.symvers" ]; then
-        msg_error "Module.symvers not found - modules may fail to build"
-    fi
-    vmkdir etc/kernel.d/post-install
-    cat > "${DESTDIR}/etc/kernel.d/post-install/50-dracut-${_kernver}" <<-EOF
-		#!/bin/sh
-		dracut --force /boot/initramfs-${_kernver}.img ${_kernver}
-	EOF
-    chmod 0755 "${DESTDIR}/etc/kernel.d/post-install/50-dracut-${_kernver}"
-    rm -f "${DESTDIR}/usr/lib/modules/${_kernver}/build"
-    rm -f "${DESTDIR}/usr/lib/modules/${_kernver}/source"
-    ln -sf "/${_hdrdir}" "${DESTDIR}/usr/lib/modules/${_kernver}/build"
+	cd "${wrksrc}"
+	local _kernver
+	_kernver="$(make -s kernelrelease)"
+	
+	# Install kernel to /boot
+	vinstall arch/x86/boot/bzImage 644 boot "vmlinuz-${_kernver}"
+	vinstall System.map 644 boot "System.map-${_kernver}"
+	vinstall .config 644 boot "config-${_kernver}"
+	
+	# Install modules
+	make INSTALL_MOD_PATH="${DESTDIR}/usr" INSTALL_MOD_STRIP=1 modules_install
+	
+	# Create pkgbase file for mkinitcpio/dracut
+	vmkdir "usr/lib/modules/${_kernver}"
+	echo "${pkgname}" > "${DESTDIR}/usr/lib/modules/${_kernver}/pkgbase"
+	
+	# Also copy vmlinuz to modules dir for systemd hibernation
+	cp "${DESTDIR}/boot/vmlinuz-${_kernver}" "${DESTDIR}/usr/lib/modules/${_kernver}/vmlinuz"
+	
+	# Install headers
+	local _hdrdir="usr/lib/modules/${_kernver}/build"
+	# Remove symlink created by modules_install, we'll install headers properly
+	rm -f "${DESTDIR}/usr/lib/modules/${_kernver}/build"
+	rm -f "${DESTDIR}/usr/lib/modules/${_kernver}/source"
+	vmkdir "${_hdrdir}"
+	cp .config "${DESTDIR}/${_hdrdir}/.config"
+	cp Makefile "${DESTDIR}/${_hdrdir}/"
+	cp Kbuild "${DESTDIR}/${_hdrdir}/" 2>/dev/null || true
+	cp System.map "${DESTDIR}/${_hdrdir}/System.map"
+	
+	if [ -f Module.symvers ]; then
+		cp Module.symvers "${DESTDIR}/${_hdrdir}/Module.symvers"
+	elif [ -f vmlinux.symvers ]; then
+		cp vmlinux.symvers "${DESTDIR}/${_hdrdir}/Module.symvers"
+		msg_warn "Module.symvers missing; using vmlinux.symvers compatibility fallback"
+	else
+		msg_warn "Module.symvers not found; installing headers without symbol version table"
+	fi
+	
+	# Required build files
+	vmkdir "${_hdrdir}/kernel"
+	cp kernel/Makefile "${DESTDIR}/${_hdrdir}/kernel/"
+	vmkdir "${_hdrdir}/arch/x86"
+	install -Dm644 "arch/x86/Makefile" "${DESTDIR}/${_hdrdir}/arch/x86/Makefile"
+	[ -f arch/x86/Makefile_32.cpu ] && install -Dm644 "arch/x86/Makefile_32.cpu" "${DESTDIR}/${_hdrdir}/arch/x86/Makefile_32.cpu"
+	[ -f arch/x86/kernel/asm-offsets.h ] && install -Dm644 "arch/x86/kernel/asm-offsets.h" "${DESTDIR}/${_hdrdir}/arch/x86/kernel/asm-offsets.h"
+	
+	# Copy scripts and includes
+	vcopy scripts "${_hdrdir}"
+	vcopy include "${_hdrdir}"
+	vcopy "arch/x86/include" "${_hdrdir}/arch/x86"
+	
+	# Install KConfig files needed for module builds
+	find . -name 'Kconfig*' -exec cp --parents {} "${DESTDIR}/${_hdrdir}/" \;
+	
+	# Install required driver headers
+	install -Dm644 drivers/md/*.h "${DESTDIR}/${_hdrdir}/drivers/md/" 2>/dev/null || true
+	install -Dm644 net/mac80211/*.h "${DESTDIR}/${_hdrdir}/net/mac80211/" 2>/dev/null || true
+	
+	# objtool needed for CONFIG_STACK_VALIDATION
+	install -Dm644 tools/objtool/objtool "${DESTDIR}/${_hdrdir}/tools/objtool/" 2>/dev/null || true
+	
+	# Verify Module.symvers
+	if [ ! -f "${DESTDIR}/${_hdrdir}/Module.symvers" ]; then
+		msg_error "Module.symvers not found - modules may fail to build"
+	fi
+	
+# Create /usr/src symlink for compatibility
+	vmkdir "usr/src"
+	ln -sf "../lib/modules/${_kernver}/build" "${DESTDIR}/usr/src/${pkgname}"
 }
 
