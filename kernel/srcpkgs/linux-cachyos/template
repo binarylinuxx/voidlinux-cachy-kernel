@@ -1,6 +1,6 @@
 # Template file for 'linux-cachyos'
 pkgname=linux-cachyos
-version=7.0.0
+version=7.0.4
 revision=1
 short_desc="Linux kernel with CachyOS patches (BORE scheduler, LRU_GEN)"
 maintainer="Nir Rudov <nrw58886@gmail.com>"
@@ -9,7 +9,7 @@ homepage="https://github.com/CachyOS/linux-cachyos"
 arch="x86_64"
 _srcname="cachyos-${version}-${revision}"
 distfiles="https://github.com/CachyOS/linux/releases/download/${_srcname}/${_srcname}.tar.gz"
-checksum="594e4f072444d8e03e8bcf4d890ffcf63671380416e1f53ac537d39865207432"
+checksum="f78579046f22db092fdb6aba1a9351ec92fff582502e79a713bc851a213d867c"
 
 wrksrc="${_srcname}"
 
